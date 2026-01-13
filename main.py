@@ -4,6 +4,7 @@ import base64
 import numpy as np
 import cv2
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # <-- ADDED
 from ultralytics import YOLO
 from PIL import Image
 
@@ -11,6 +12,16 @@ from PIL import Image
 os.environ['YOLO_CONFIG_DIR'] = '/tmp/ultralytics'
 
 app = FastAPI()
+
+# --- STEP 1: ENABLE CORS ---
+# This allows your HTML tester and mobile app to talk to the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all websites/local files to connect
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows POST, GET, OPTIONS, etc.
+    allow_headers=["*"],  # Allows all security headers
+)
 
 # Load YOLO model once on startup
 try:
@@ -51,7 +62,8 @@ async def estimate_weight_api(file: UploadFile = File(...)):
         
     results = model(img_cv, imgsz=640)
     
-    if not results or len(results[0].masks) is None:
+    # Check if results and masks exist
+    if not results or results[0].masks is None:
         return {"success": False, "error": "No cow detected"}
 
     # 4. Calculation Logic
