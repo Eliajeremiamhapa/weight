@@ -4,93 +4,85 @@ import base64
 import numpy as np
 import cv2
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware  # <-- ADDED
+from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 from PIL import Image
 
-# FIX: Prevent the "user config directory not writable" warning on Render
 os.environ['YOLO_CONFIG_DIR'] = '/tmp/ultralytics'
 
 app = FastAPI()
 
-# --- STEP 1: ENABLE CORS ---
-# This allows your HTML tester and mobile app to talk to the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all websites/local files to connect
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows POST, GET, OPTIONS, etc.
-    allow_headers=["*"],  # Allows all security headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Load YOLO model once on startup
 try:
-    # Render free tier has limited RAM, we load the model into CPU memory
     model = YOLO("yolov8n-seg.pt")
 except Exception as e:
-    print(f"Error loading model: {e}")
     model = None
 
-PIXEL_TO_METER = 0.01  # Calibration constant
+PIXEL_TO_METER = 0.01 
 
 @app.get("/")
 async def root():
-    """Root endpoint to prevent 404 errors during health checks."""
     return {
-        "status": "Online",
-        "message": "Cow Weight Estimator API is running. Use the /estimate endpoint for POST requests.",
-        "model_loaded": model is not None
+        "status": "Ready",
+        "message": "Welcome! The Cow Weight Estimator is online and ready to help.",
+        "instructions": "Send a side-view photo of your cow to the /estimate endpoint."
     }
 
 @app.post("/estimate")
 async def estimate_weight_api(file: UploadFile = File(...)):
-    # 1. Validate file type
     if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+        return {
+            "success": False, 
+            "message": "Oops! That wasn't an image. Please upload a clear JPG or PNG photo of the cow."
+        }
 
-    # 2. Read and process image
     try:
         contents = await file.read()
         pil_img = Image.open(io.BytesIO(contents)).convert("RGB")
         img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid image data")
+        return {
+            "success": False, 
+            "message": "We couldn't read that image. Try taking the photo again with better lighting."
+        }
 
-    # 3. YOLO Segmentation Inference
     if model is None:
-        raise HTTPException(status_code=500, detail="Model not loaded on server")
+        return {"success": False, "message": "The AI is currently resting. Please try again in a few seconds."}
         
     results = model(img_cv, imgsz=640)
     
-    # Check if results and masks exist
     if not results or results[0].masks is None:
-        return {"success": False, "error": "No cow detected"}
+        return {
+            "success": False, 
+            "message": "We couldn't find a cow in that photo. Make sure the cow is visible from the side and not blocked by anything."
+        }
 
-    # 4. Calculation Logic
-    # results[0].masks.xy is a list of segments for detected objects
     mask_xy = results[0].masks.xy[0]
     mask_array = np.array(mask_xy)
     
-    # Calculate pixel dimensions
     L_pixels = mask_array[:, 1].max() - mask_array[:, 1].min()
     G_pixels = mask_array[:, 0].max() - mask_array[:, 0].min()
     
-    # Convert to meters
     L = round(L_pixels * PIXEL_TO_METER, 2)
     G = round(G_pixels * PIXEL_TO_METER, 2)
-    
-    # Weight formula: W = (L * G^2) / 0.3
     weight_kg = round((L * G**2) / 0.3, 2)
 
-    # 5. Prepare Annotated Image for JSON response
-    # results[0].plot() draws the masks and boxes automatically
     res_plotted = results[0].plot() 
     _, buffer = cv2.imencode('.jpg', res_plotted)
     img_base64 = base64.b64encode(buffer).decode('utf-8')
 
-    # 6. Return Clean JSON
+    # FRIENDLY RESPONSE
     return {
         "success": True,
+        "message": f"Successfully calculated! Your cow is approximately {weight_kg} kg.",
+        "tips": "For the best accuracy, ensure the cow is standing on level ground.",
         "data": {
             "weight_kg": weight_kg,
             "length_m": L,
