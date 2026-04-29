@@ -20,6 +20,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- ENDPOINT MPYA YA KEEP-ALIVE ---
+@app.get("/ping")
+async def ping():
+    """Hii endpoint ni kwa ajili ya kuzuia Render isi-sleep."""
+    return {"status": "alive", "message": "I am awake!"}
+# -----------------------------------
+
 try:
     model = YOLO("yolov8n-seg.pt")
 except Exception as e:
@@ -78,7 +85,6 @@ async def estimate_weight_api(file: UploadFile = File(...)):
     _, buffer = cv2.imencode('.jpg', res_plotted)
     img_base64 = base64.b64encode(buffer).decode('utf-8')
 
-    # FRIENDLY RESPONSE
     return {
         "success": True,
         "message": f"Successfully calculated! Your cow is approximately {weight_kg} kg.",
